@@ -7,7 +7,7 @@ import type {
   AdapterRepostResponsePayload,
   ProcessHandler,
   ProcessMethod,
-  RepostHandler,
+  RepostHandler, RepostMethod,
 } from '@snowball-bot/repost-adapter';
 
 /**
@@ -103,10 +103,12 @@ export class MockAdapterHost {
    * 模拟核心收到下一步进程触发（🍓 / 🍉 / 🍎）
    *
    * @param method 进程代号（strawberry / watermelon / apple）
+   * @param repostMethod
    * @param source 进程入参，通常是上一步 response 中携带的 ID
    */
   async emitProcess(
     method: ProcessMethod,
+    repostMethod: RepostMethod,
     source: string
   ): Promise<AdapterProcessResponsePayload | null> {
     if (!this.processHandler || !this.adapter) {
@@ -117,13 +119,14 @@ export class MockAdapterHost {
     }
 
     const req: AdapterProcessRequestParams = {
+      repostMethod,
       method,
       source,
       code: `dev-${Date.now()}`,
       requester: {
         userId: '-1',
         nickname: 'DEVELOPER'
-      },
+      }
     };
 
     console.log(`\n→ emitProcess(${method}): ${source}`);

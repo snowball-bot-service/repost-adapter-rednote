@@ -2,7 +2,7 @@
   "name": "repost-adapter-rednote",
   "version": "0.1.1",
   "description": "Rednote repost adapter for Snowball Bot v3.",
-  "author": "TODO: your name",
+  "author": "Rominwolf",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -43,7 +43,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@snowball-bot/repost-adapter": "^1.0.9",
+    "@snowball-bot/repost-adapter": "^1.0.10",
     "dayjs": "^1.11.21"
   },
   "devDependencies": {

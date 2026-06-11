@@ -11,8 +11,8 @@ async function main() {
 
   // 测试 URL 列表：随便改、随便加
   const testUrls = [
-    'http://xhslink.com/o/d8PISjsVoB',
-    'https://www.xiaohongshu.com/discovery/item/6a291d280000000007029d18?app_platform=android'
+    // 'http://xhslink.com/o/d8PISjsVoB',
+    'https://www.xiaohongshu.com/explore/6a291d280000000007029d18'
   ];
 
   for (const url of testUrls) {
@@ -21,7 +21,7 @@ async function main() {
 
       // 转发 post 后，模拟用户点 🍓 触发 strawberry 进程（取原图）
       if (res?.method === 'post' && res.strawberry) {
-        await host.emitProcess('strawberry', res.postId);
+        await host.emitProcess('strawberry', res.method, res.postId);
       }
     } catch (err) {
       console.error(`✗ Failed:`, err);

@@ -7,7 +7,7 @@ import { RednoteItemRootPayload } from "./rednote.type";
 const COOKIE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** 小红书首页地址，用于获取匿名 Cookie */
-const HOMEPAGE_URL = "https://www.xiaohongshu.com/";
+export const HOMEPAGE_URL = "https://www.xiaohongshu.com/";
 
 /**
  * 浏览器 User-Agent。
@@ -57,6 +57,7 @@ export class RednoteManager {
   ): Promise<RednoteItemRootPayload | null> {
     try {
       const cookie = await this.getAnonymousCookies();
+      this.logger?.debug("REDNOTE COOKIE", cookie);
       const html = await this.http.getText(link, {
         headers: {
           Cookie: cookie,

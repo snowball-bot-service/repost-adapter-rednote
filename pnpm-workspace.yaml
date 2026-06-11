@@ -2,3 +2,4 @@ allowBuilds:
   esbuild: false
 minimumReleaseAgeExclude:
   - '@snowball-bot/repost-adapter@1.0.4'
+  - '@snowball-bot/repost-adapter@1.0.10'

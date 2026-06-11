@@ -1,16 +1,24 @@
 import {
   Adapter,
   AdapterContext,
-  AdapterProcessRequestParams, AdapterProcessResponsePayload,
+  AdapterProcessRequestParams,
+  AdapterProcessResponsePayload,
   AdapterRepostRequestParams,
   AdapterRepostResponsePayload,
+  ProcessMediaInfo,
   SocialProvider,
 } from '@snowball-bot/repost-adapter';
 import { HttpManager } from './utils/http';
-import {extractHandleId, fetchHandleDataFromAPI} from "./manager";
-import {RednoteManager} from "./rednote/rednote.manager";
-import {UnsupportedMethodException, UnsupportedProcessException} from "./utils/error";
-import dayjs from "dayjs";
+import { extractHandleId, fetchHandleDataFromAPI } from './manager';
+import { HOMEPAGE_URL, RednoteManager } from './rednote/rednote.manager';
+import { NoteData } from './rednote/rednote.type';
+import {
+  FetchHandleDataFailedException,
+  UnsupportedMethodException,
+  UnsupportedProcessException,
+} from './utils/error';
+import dayjs from 'dayjs';
+import { RepostExtraParams } from './type';
 
 export { HttpManager, HttpError } from './utils/http';
 export type {
@@ -46,16 +54,16 @@ interface AdapterOptions {
  * @param apiRetries API 重试次数
  */
 const CONST: {
-  apiBaseURL: string,
-  provider: SocialProvider,
-  apiTimeout: number,
-  apiRetries: number,
+  apiBaseURL: string;
+  provider: SocialProvider;
+  apiTimeout: number;
+  apiRetries: number;
 } = {
-  provider: "rednote",
-  apiBaseURL: "https://example.com",
+  provider: 'rednote',
+  apiBaseURL: 'https://www.xiaohongshu.com',
   apiTimeout: 5000,
   apiRetries: 1,
-}
+};
 
 /**
  * 实例仓库
@@ -68,7 +76,7 @@ const INSTANCE: {
 } = {
   http: null,
   rednote: null,
-}
+};
 
 const adapter: Adapter = {
   manifest: {
@@ -88,7 +96,7 @@ const adapter: Adapter = {
       icon: '📕',
       color: '#FFFFFF',
       bgColor: '#F72340',
-    }
+    },
   },
 
   /**
@@ -99,11 +107,6 @@ const adapter: Adapter = {
     // 读取配置（可选）。配置由核心通过 `ctx.config(key)` 提供。
     // 比如 API key、限流参数等，建议把所有可调项都从 config 取。
     const apiKey = ctx.config<string>('apiKey');
-    if (!apiKey) {
-      ctx.logger.warn(
-        `[${CONST.provider}] no apiKey configured, falling back to public API`
-      );
-    }
 
     // 创建 HTTP 客户端 (基于 fetch), 统一处理 baseUrl / 鉴权 / 超时 / 重试
     INSTANCE.http = new HttpManager({
@@ -151,7 +154,7 @@ const adapter: Adapter = {
 async function handleRepostRequest(
   req: AdapterRepostRequestParams,
   ctx: AdapterContext,
-  _options: object,
+  _options: object
 ): Promise<AdapterRepostResponsePayload | null> {
   const { helper, logger } = ctx;
 
@@ -161,13 +164,17 @@ async function handleRepostRequest(
   const [handleMethod, handleId] = extractHandleId(req.source);
 
   // 不支持的转发模式
-  if (!handleMethod || !handleId || handleMethod === "live")
+  if (!handleMethod || !handleId || handleMethod === 'live')
     throw new UnsupportedMethodException(handleMethod, handleId);
 
   // 调用小红书工具类拿到原始数据 (传入完整链接, 含 xsec_token 等查询参数)
-  const handleData = await fetchHandleDataFromAPI(INSTANCE.rednote!, handleMethod, req.source);
+  const handleData = await fetchHandleDataFromAPI(
+    INSTANCE.rednote!,
+    handleMethod,
+    req.source
+  );
 
-  logger.debug("HANDLE DATA", handleData);
+  logger.debug('HANDLE DATA', handleData);
 
   // 优先用负载里的真实 noteId 作 postId, 保证长/短链得到一致结果;
   // 负载缺失时回退到 extractHandleId 的临时 id
@@ -175,29 +182,91 @@ async function handleRepostRequest(
 
   // 函数：构建 Post
   const fnBuildPost = (): Omit<
-    AdapterRepostResponsePayload,
-    'postId' | 'method' | "code" | "originalUrl" | "provider" | "requester"
+    AdapterRepostResponsePayload<RepostExtraParams>,
+    'postId' | 'method' | 'code' | 'originalUrl' | 'provider' | 'requester'
   > => {
-    const payload = handleData as unknown;
+    // 从负载里取出当前笔记的 NoteData
+    const note =
+      handleData?.note?.noteDetailMap?.[handleData.note.currentNoteId]?.note;
+    if (!note) {
+      throw new FetchHandleDataFailedException(
+        'post',
+        handleId,
+        '笔记负载缺失或解析失败'
+      );
+    }
+
+    const { title, desc, user, interactInfo, imageList, time } = note;
+
+    // 图片组: 取每张图的默认 URL (视频笔记的 imageList 通常为封面帧)
+    const images = (imageList ?? [])
+      .map((img) => img.urlDefault || img.url)
+      .filter(Boolean);
+
+    // 互动数为字符串, 转成数字交给 extraHumanable 做人类可读格式化
+    const toNum = (value?: string) => Number.parseInt(value ?? '0', 10) || 0;
 
     return {
-      publishAt: dayjs.unix(10000000000).toDate(),
+      // NoteData.time 为 unix 毫秒时间戳
+      publishAt: time ? dayjs(time).toDate() : undefined,
 
       author: {
-        nickname: "",
+        userId: user?.userId,
+        nickname: user?.nickname ?? '',
+        headshotUrl: user?.avatar,
       },
 
-      content: "",
+      title: title || undefined,
+      content: desc ?? '',
+
+      // 单图作封面, 多图作图片组
+      cover: images.length === 1 ? images[0] : undefined,
+      images: images.length > 1 ? images : undefined,
 
       badges: [
         [
-          { emoji: "👀", name: helper.extraHumanable("浏览", 0, "次") },
-        ]
+          {
+            emoji: '♥',
+            name: helper.extraHumanable(
+              '点赞',
+              toNum(interactInfo?.likedCount),
+              '人'
+            ),
+          },
+          {
+            emoji: '⭐',
+            name: helper.extraHumanable(
+              '收藏',
+              toNum(interactInfo?.collectedCount),
+              '次'
+            ),
+          },
+          {
+            emoji: '💬',
+            name: helper.extraHumanable(
+              '评论',
+              toNum(interactInfo?.commentCount),
+              '条'
+            ),
+          },
+          {
+            emoji: '📤',
+            name: helper.extraHumanable(
+              '分享',
+              toNum(interactInfo?.shareCount),
+              '次'
+            ),
+          },
+        ],
       ],
 
       strawberry: {
-        emoji: "🖼",
-        feature: "原图",
+        emoji: '🖼',
+        feature: '原图',
+      },
+
+      extra: {
+        rawUrl: req.source,
       },
     };
   };
@@ -205,24 +274,20 @@ async function handleRepostRequest(
   // 函数：构建 Profile
   const fnBuildProfile = (): Omit<
     AdapterRepostResponsePayload,
-    'postId' | 'method' | "code" | "originalUrl" | "provider" | "requester"
+    'postId' | 'method' | 'code' | 'originalUrl' | 'provider' | 'requester'
   > => {
     const payload = handleData as unknown;
 
     return {
       author: {
-        nickname: "",
+        nickname: '',
       },
 
-      content: "",
+      content: '',
 
-      badges: [
-        [
-          { emoji: "👀", name: helper.extraHumanable("浏览", 0, "次") },
-        ]
-      ],
-    }
-  }
+      badges: [[{ emoji: '👀', name: helper.extraHumanable('浏览', 0, '次') }]],
+    };
+  };
 
   // 转换成标准 response 格式
   return {
@@ -234,23 +299,90 @@ async function handleRepostRequest(
 
     postId,
 
-    ...(handleMethod === "post" ? fnBuildPost() : fnBuildProfile()),
+    ...(handleMethod === 'post' ? fnBuildPost() : fnBuildProfile()),
   };
 }
 
+/**
+ * 从 NoteData 收集全部媒体资源 (图片 / 视频 / 实况视频), 转成进程媒体列表。
+ *
+ *   - 视频笔记: 取主视频 (流优先级 h265 体积更小 > h264 > av1 > h266)
+ *   - 图片笔记: 取每张原图; 实况图额外附带其视频流
+ */
+function extractNoteMedias(note: NoteData): ProcessMediaInfo[] {
+  const medias: ProcessMediaInfo[] = [];
+
+  // 按编码优先级从视频流里取首个可用的 masterUrl
+  const pickStreamUrl = (stream?: {
+    h265?: { masterUrl: string }[];
+    h264?: { masterUrl: string }[];
+    av1?: { masterUrl: string }[];
+    h266?: { masterUrl: string }[];
+  }): string | undefined => {
+    for (const variants of [stream?.h265, stream?.h264, stream?.av1, stream?.h266]) {
+      const url = variants?.[0]?.masterUrl;
+      if (url) return url;
+    }
+    return undefined;
+  };
+
+  // 视频笔记: 仅返回主视频 (imageList 此时为封面帧, 不重复输出)
+  if (note.video) {
+    const url = pickStreamUrl(note.video.media?.stream);
+    if (url) medias.push({ type: 'video', url });
+    return medias;
+  }
+
+  // 图片笔记: 逐张输出原图; 实况图额外附带视频流
+  for (const image of note.imageList ?? []) {
+    if (image.livePhoto) {
+      const liveUrl = pickStreamUrl(image.stream);
+      if (liveUrl) medias.push({ type: 'video', url: liveUrl });
+    }
+
+    const imageUrl = image.urlDefault || image.url;
+    if (imageUrl) medias.push({ type: 'image', url: imageUrl });
+  }
+
+  return medias;
+}
+
 async function handleProcessingRequest(
-  req: AdapterProcessRequestParams,
+  req: AdapterProcessRequestParams<RepostExtraParams>,
   ctx: AdapterContext,
   _options: object
 ): Promise<AdapterProcessResponsePayload | null> {
   const { logger } = ctx;
-  const { method, source, requester, code } = req;
+  const { method, source, requester, code, repostMethod, extra } = req;
 
   logger.debug(`[${CONST.provider}] fetching ${method}: ${source}`);
 
-  // 获取原图
-  if (method === 'strawberry') {
+  // 获取原图 / 原视频: 抓取笔记并返回其全部媒体资源
+  if (method === 'strawberry' && repostMethod === 'post') {
+    const postLink = `${HOMEPAGE_URL}explore/${source}`;
+    const payload = await fetchHandleDataFromAPI(INSTANCE.rednote!, 'post', postLink);
 
+    logger.debug("PROCESS RESPONSE DATA", JSON.stringify(payload));
+
+    const note =
+      payload?.note?.noteDetailMap?.[payload.note.currentNoteId]?.note;
+    if (!note) {
+      throw new FetchHandleDataFailedException(
+        'post',
+        source,
+        '笔记负载缺失或解析失败'
+      );
+    }
+
+    logger.debug("PROCESS NOTE DATA", JSON.stringify(note));
+
+    return {
+      method,
+      requester,
+      code,
+      provider: CONST.provider,
+      medias: extractNoteMedias(note),
+    };
   }
 
   // 抛出不支持的进程
