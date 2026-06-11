@@ -6,3 +6,12 @@ coverage
 .env
 .env.local
 .idea
+
+# 构建产物只应输出到 dist/; 忽略误入 src/、tests/ 的编译文件
+# (根目录的 eslint.config.js / *.config.ts 不受影响)
+src/**/*.js
+src/**/*.d.ts
+src/**/*.js.map
+src/**/*.d.ts.map
+tests/**/*.js
+tests/**/*.d.ts

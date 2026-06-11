@@ -8,6 +8,7 @@ import {
 } from '@snowball-bot/repost-adapter';
 import { HttpManager } from './utils/http';
 import {extractHandleId, fetchHandleDataFromAPI} from "./manager";
+import {RednoteManager} from "./rednote/rednote.manager";
 import {UnsupportedMethodException, UnsupportedProcessException} from "./utils/error";
 import dayjs from "dayjs";
 
@@ -50,7 +51,7 @@ const CONST: {
   apiTimeout: number,
   apiRetries: number,
 } = {
-  provider: "REPLACE_ME",
+  provider: "rednote",
   apiBaseURL: "https://example.com",
   apiTimeout: 5000,
   apiRetries: 1,
@@ -59,20 +60,23 @@ const CONST: {
 /**
  * 实例仓库
  * @param instance.http 模块级 HTTP 客户端, 在 initState 中创建, dispose 中销毁
+ * @param instance.rednote 小红书工具类, 在 initState 中创建, 复用 http 客户端
  * */
 const INSTANCE: {
   http: HttpManager | null;
+  rednote: RednoteManager | null;
 } = {
   http: null,
+  rednote: null,
 }
 
 const adapter: Adapter = {
   manifest: {
     name: `repost-adapter-${CONST.provider}`,
     provider: CONST.provider,
-    whitelistHosts: ['example.com'],
+    whitelistHosts: ['xiaohongshu.com'],
     version: 1,
-    author: 'REPLACE_ME',
+    author: 'Rominwolf',
     billing: {
       text: 100,
       token: 100,
@@ -80,10 +84,10 @@ const adapter: Adapter = {
       green: 1,
     },
     providerInfo: {
-      name: 'REPLACE_ME',
-      icon: '✨',
+      name: '小红书',
+      icon: '📕',
       color: '#FFFFFF',
-      bgColor: '#000000',
+      bgColor: '#F72340',
     }
   },
 
@@ -110,6 +114,12 @@ const adapter: Adapter = {
       logger: ctx.logger,
     });
 
+    // 创建小红书工具类, 复用上面的 HTTP 客户端 (其内部均使用绝对 URL, 不受 baseUrl 影响)
+    INSTANCE.rednote = new RednoteManager({
+      http: INSTANCE.http,
+      logger: ctx.logger,
+    });
+
     // 注册转发请求处理器
     ctx.on('onRepostRequest', (req) => handleRepostRequest(req, ctx, {}));
     ctx.on('onProcessRequest', (req) => handleProcessingRequest(req, ctx, {}));
@@ -126,6 +136,7 @@ const adapter: Adapter = {
     // 中断在途请求并释放 HTTP 客户端
     INSTANCE.http?.dispose();
     INSTANCE.http = null;
+    INSTANCE.rednote = null;
   },
 };
 
@@ -153,8 +164,12 @@ async function handleRepostRequest(
   if (!handleMethod || !handleId || handleMethod === "live")
     throw new UnsupportedMethodException(handleMethod, handleId);
 
-  // 调用平台 API 拿到原始数据
-  const handleData = await fetchHandleDataFromAPI(INSTANCE.http!, handleMethod, handleId);
+  // 调用小红书工具类拿到原始数据 (传入完整链接, 含 xsec_token 等查询参数)
+  const handleData = await fetchHandleDataFromAPI(INSTANCE.rednote!, handleMethod, req.source);
+
+  // 优先用负载里的真实 noteId 作 postId, 保证长/短链得到一致结果;
+  // 负载缺失时回退到 extractHandleId 的临时 id
+  const postId = handleData?.note?.currentNoteId || handleId;
 
   // 函数：构建 Post
   const fnBuildPost = (): Omit<
@@ -215,7 +230,7 @@ async function handleRepostRequest(
     originalUrl: req.source,
     requester: req.requester,
 
-    postId: handleId,
+    postId,
 
     ...(handleMethod === "post" ? fnBuildPost() : fnBuildProfile()),
   };

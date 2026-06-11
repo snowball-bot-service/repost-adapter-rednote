@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@snowball-bot/repost-adapter':
-        specifier: ^1.0.8
-        version: 1.0.8
+        specifier: ^1.0.9
+        version: 1.0.9
       dayjs:
         specifier: ^1.11.21
         version: 1.11.21
@@ -707,8 +707,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@snowball-bot/repost-adapter@1.0.8':
-    resolution: {integrity: sha512-bVFBSOV94R7Wey/onJbhRT5uZ8MG4kE83DIXkkdFsVtyVKF+uKPCL2Av68iNsIm0EZtxvY4MrY0yaXJolR6teA==}
+  '@snowball-bot/repost-adapter@1.0.9':
+    resolution: {integrity: sha512-ka1LFZe0aBh4YTcETEeO4o1076EGski59Yyz8cc1g3+8UMos8427bgrCdD+D5tmlWXfQjt7iCfNlReIbpA/3ug==}
     engines: {node: '>=18'}
 
   '@types/estree@1.0.8':
@@ -1845,7 +1845,7 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.60.4':
     optional: true
 
-  '@snowball-bot/repost-adapter@1.0.8': {}
+  '@snowball-bot/repost-adapter@1.0.9': {}
 
   '@types/estree@1.0.8': {}
 

@@ -15,6 +15,15 @@ import type { ILogger } from '@snowball-bot/repost-adapter';
 /** 支持的 HTTP 方法 */
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
 
+/**
+ * `fetch` 可直接接受的请求体类型 (等价于全局 `BodyInit`)。
+ *
+ * 当前 tsconfig 的 `lib` 仅含 `ES2020` 且仅引入 `@types/node`，全局 `BodyInit`
+ * 名称在源码中不可直接引用 (其类型来自 undici 内部、未暴露到全局作用域)，
+ * 因此直接从 `fetch` 自身签名提取，避免手写联合类型与实际定义产生偏差。
+ */
+type RequestBody = NonNullable<Parameters<typeof fetch>[1]>["body"];
+
 /** 查询参数: 值为 undefined / null 的项会被忽略 */
 export type QueryParams = Record<
   string,
@@ -263,7 +272,7 @@ export class HttpManager {
     method: HttpMethod,
     url: string,
     headers: Record<string, string>,
-    body: BodyInit | undefined,
+    body: RequestBody | undefined,
     timeoutMs: number,
     externalSignal?: AbortSignal
   ): Promise<Response> {
@@ -312,7 +321,7 @@ export class HttpManager {
   /** 合并请求头并序列化请求体 */
   private buildBody(options: HttpRequestOptions): {
     headers: Record<string, string>;
-    body: BodyInit | undefined;
+    body: RequestBody | undefined;
   } {
     const headers: Record<string, string> = {
       ...this.defaultHeaders,
@@ -331,7 +340,7 @@ export class HttpManager {
       raw instanceof ArrayBuffer ||
       ArrayBuffer.isView(raw)
     ) {
-      return { headers, body: raw as BodyInit };
+      return { headers, body: raw as RequestBody };
     }
 
     // 普通对象 / 数组 -> JSON

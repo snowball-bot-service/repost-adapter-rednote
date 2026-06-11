@@ -11,7 +11,8 @@ async function main() {
 
   // 测试 URL 列表：随便改、随便加
   const testUrls = [
-    'https://example.com/post/44716',
+    'http://xhslink.com/o/d8PISjsVoB',
+    'https://www.xiaohongshu.com/discovery/item/6a291d280000000007029d18?app_platform=android'
   ];
 
   for (const url of testUrls) {
