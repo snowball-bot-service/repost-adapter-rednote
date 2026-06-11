@@ -74,7 +74,7 @@ const adapter: Adapter = {
   manifest: {
     name: `repost-adapter-${CONST.provider}`,
     provider: CONST.provider,
-    whitelistHosts: ['xiaohongshu.com'],
+    whitelistHosts: ['xiaohongshu.com', 'xhslink.com'],
     version: 1,
     author: 'Rominwolf',
     billing: {
@@ -166,6 +166,8 @@ async function handleRepostRequest(
 
   // 调用小红书工具类拿到原始数据 (传入完整链接, 含 xsec_token 等查询参数)
   const handleData = await fetchHandleDataFromAPI(INSTANCE.rednote!, handleMethod, req.source);
+
+  logger.debug("HANDLE DATA", handleData);
 
   // 优先用负载里的真实 noteId 作 postId, 保证长/短链得到一致结果;
   // 负载缺失时回退到 extractHandleId 的临时 id
