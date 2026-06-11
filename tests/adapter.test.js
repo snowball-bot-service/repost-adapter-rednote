@@ -1,0 +1,58 @@
+import { describe, it, expect, vi } from 'vitest';
+import adapter from '../src';
+function createMockContext(configValues = {}) {
+    let handler = null;
+    const ctx = {
+        on: vi.fn((event, h) => {
+            if (event === 'onRepostRequest')
+                handler = h;
+        }),
+        config: vi.fn((key) => configValues[key]),
+        helper: {
+            pick: (record, key, fallback) => record[key] ?? fallback,
+        },
+        logger: {
+            info: vi.fn(),
+            warn: vi.fn(),
+            error: vi.fn(),
+            debug: vi.fn(),
+        },
+    };
+    return {
+        ctx,
+        getHandler: () => {
+            if (!handler)
+                throw new Error('Handler not registered');
+            return handler;
+        },
+    };
+}
+describe('adapter', () => {
+    it('exposes correct manifest', () => {
+        // TODO: 改成你自己的预期值
+        expect(adapter.manifest.name).toMatch(/^repost-adapter-/);
+        expect(adapter.manifest.whitelistHosts.length).toBeGreaterThan(0);
+    });
+    it('registers handler on init', async () => {
+        const { ctx } = createMockContext();
+        await adapter.initState(ctx);
+        expect(ctx.on).toHaveBeenCalledWith('onRepostRequest', expect.any(Function));
+    });
+    it('handles a request', async () => {
+        const { ctx, getHandler } = createMockContext({
+            apiKey: 'test-key',
+        });
+        await adapter.initState(ctx);
+        const result = await getHandler()({
+            source: 'https://example.com/posts/123',
+            code: 'test',
+            requester: {
+                userId: 'REQUESTER_USERID',
+                nickname: 'REQUESTER_NICKNAME',
+            },
+        });
+        expect(result).not.toBeNull();
+        expect(result.originalUrl).toBe('https://example.com/posts/123');
+    });
+});
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiYWRhcHRlci50ZXN0LmpzIiwic291cmNlUm9vdCI6IiIsInNvdXJjZXMiOlsiYWRhcHRlci50ZXN0LnRzIl0sIm5hbWVzIjpbXSwibWFwcGluZ3MiOiJBQUFBLE9BQU8sRUFBRSxRQUFRLEVBQUUsRUFBRSxFQUFFLE1BQU0sRUFBRSxFQUFFLEVBQUUsTUFBTSxRQUFRLENBQUM7QUFLbEQsT0FBTyxPQUFPLE1BQU0sUUFBUSxDQUFDO0FBRTdCLFNBQVMsaUJBQWlCLENBQ3hCLGVBQXdDLEVBQUU7SUFFMUMsSUFBSSxPQUFPLEdBQXlCLElBQUksQ0FBQztJQUV6QyxNQUFNLEdBQUcsR0FBbUI7UUFDMUIsRUFBRSxFQUFFLEVBQUUsQ0FBQyxFQUFFLENBQUMsQ0FBQyxLQUFLLEVBQUUsQ0FBQyxFQUFFLEVBQUU7WUFDckIsSUFBSSxLQUFLLEtBQUssaUJBQWlCO2dCQUFFLE9BQU8sR0FBRyxDQUFDLENBQUM7UUFDL0MsQ0FBQyxDQUFDO1FBQ0YsTUFBTSxFQUFFLEVBQUUsQ0FBQyxFQUFFLENBQUMsQ0FBQyxHQUFXLEVBQUUsRUFBRSxDQUFDLFlBQVksQ0FBQyxHQUFHLENBQUMsQ0FBNkI7UUFDN0UsTUFBTSxFQUFFO1lBQ04sSUFBSSxFQUFFLENBQUMsTUFBTSxFQUFFLEdBQUcsRUFBRSxRQUFRLEVBQUUsRUFBRSxDQUFDLE1BQU0sQ0FBQyxHQUFHLENBQUMsSUFBSSxRQUFTO1NBQzFEO1FBQ0QsTUFBTSxFQUFFO1lBQ04sSUFBSSxFQUFFLEVBQUUsQ0FBQyxFQUFFLEVBQUU7WUFDYixJQUFJLEVBQUUsRUFBRSxDQUFDLEVBQUUsRUFBRTtZQUNiLEtBQUssRUFBRSxFQUFFLENBQUMsRUFBRSxFQUFFO1lBQ2QsS0FBSyxFQUFFLEVBQUUsQ0FBQyxFQUFFLEVBQUU7U0FDZjtLQUNGLENBQUM7SUFFRixPQUFPO1FBQ0wsR0FBRztRQUNILFVBQVUsRUFBRSxHQUFHLEVBQUU7WUFDZixJQUFJLENBQUMsT0FBTztnQkFBRSxNQUFNLElBQUksS0FBSyxDQUFDLHdCQUF3QixDQUFDLENBQUM7WUFDeEQsT0FBTyxPQUFPLENBQUM7UUFDakIsQ0FBQztLQUNGLENBQUM7QUFDSixDQUFDO0FBRUQsUUFBUSxDQUFDLFNBQVMsRUFBRSxHQUFHLEVBQUU7SUFDdkIsRUFBRSxDQUFDLDBCQUEwQixFQUFFLEdBQUcsRUFBRTtRQUNsQyxrQkFBa0I7UUFDbEIsTUFBTSxDQUFDLE9BQU8sQ0FBQyxRQUFRLENBQUMsSUFBSSxDQUFDLENBQUMsT0FBTyxDQUFDLGtCQUFrQixDQUFDLENBQUM7UUFDMUQsTUFBTSxDQUFDLE9BQU8sQ0FBQyxRQUFRLENBQUMsY0FBYyxDQUFDLE1BQU0sQ0FBQyxDQUFDLGVBQWUsQ0FBQyxDQUFDLENBQUMsQ0FBQztJQUNwRSxDQUFDLENBQUMsQ0FBQztJQUVILEVBQUUsQ0FBQywyQkFBMkIsRUFBRSxLQUFLLElBQUksRUFBRTtRQUN6QyxNQUFNLEVBQUUsR0FBRyxFQUFFLEdBQUcsaUJBQWlCLEVBQUUsQ0FBQztRQUNwQyxNQUFNLE9BQU8sQ0FBQyxTQUFTLENBQUMsR0FBRyxDQUFDLENBQUM7UUFDN0IsTUFBTSxDQUFDLEdBQUcsQ0FBQyxFQUFFLENBQUMsQ0FBQyxvQkFBb0IsQ0FDakMsaUJBQWlCLEVBQ2pCLE1BQU0sQ0FBQyxHQUFHLENBQUMsUUFBUSxDQUFDLENBQ3JCLENBQUM7SUFDSixDQUFDLENBQUMsQ0FBQztJQUVILEVBQUUsQ0FBQyxtQkFBbUIsRUFBRSxLQUFLLElBQUksRUFBRTtRQUNqQyxNQUFNLEVBQUUsR0FBRyxFQUFFLFVBQVUsRUFBRSxHQUFHLGlCQUFpQixDQUFDO1lBQzVDLE1BQU0sRUFBRSxVQUFVO1NBQ25CLENBQUMsQ0FBQztRQUNILE1BQU0sT0FBTyxDQUFDLFNBQVMsQ0FBQyxHQUFHLENBQUMsQ0FBQztRQUU3QixNQUFNLE1BQU0sR0FBRyxNQUFNLFVBQVUsRUFBRSxDQUFDO1lBQ2hDLE1BQU0sRUFBRSwrQkFBK0I7WUFDdkMsSUFBSSxFQUFFLE1BQU07WUFDWixTQUFTLEVBQUU7Z0JBQ1QsTUFBTSxFQUFFLGtCQUFrQjtnQkFDMUIsUUFBUSxFQUFFLG9CQUFvQjthQUMvQjtTQUNGLENBQUMsQ0FBQztRQUVILE1BQU0sQ0FBQyxNQUFNLENBQUMsQ0FBQyxHQUFHLENBQUMsUUFBUSxFQUFFLENBQUM7UUFDOUIsTUFBTSxDQUFDLE1BQU8sQ0FBQyxXQUFXLENBQUMsQ0FBQyxJQUFJLENBQUMsK0JBQStCLENBQUMsQ0FBQztJQUNwRSxDQUFDLENBQUMsQ0FBQztBQUNMLENBQUMsQ0FBQyxDQUFDIn0=
