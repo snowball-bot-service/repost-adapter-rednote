@@ -211,12 +211,11 @@ async function handleRepostRequest(
       publishAt: time ? dayjs(time).toDate() : undefined,
 
       author: {
-        userId: user?.userId,
-        nickname: user?.nickname ?? '',
+        nickname: user?.nickname ?? 'momo',
         headshotUrl: user?.avatar,
       },
 
-      title: title || undefined,
+      title: title,
       content: desc ?? '',
 
       // 单图作封面, 多图作图片组
@@ -348,19 +347,19 @@ function extractNoteMedias(note: NoteData): ProcessMediaInfo[] {
 }
 
 async function handleProcessingRequest(
-  req: AdapterProcessRequestParams<RepostExtraParams>,
+  req: AdapterProcessRequestParams,
   ctx: AdapterContext,
   _options: object
 ): Promise<AdapterProcessResponsePayload | null> {
   const { logger } = ctx;
-  const { method, source, requester, code, repostMethod, extra } = req;
+  const { method, source, requester, code, repostMethod, extra: _extra } = req;
+  const { rawUrl } = _extra as RepostExtraParams;
 
   logger.debug(`[${CONST.provider}] fetching ${method}: ${source}`);
 
   // 获取原图 / 原视频: 抓取笔记并返回其全部媒体资源
   if (method === 'strawberry' && repostMethod === 'post') {
-    const postLink = `${HOMEPAGE_URL}explore/${source}`;
-    const payload = await fetchHandleDataFromAPI(INSTANCE.rednote!, 'post', postLink);
+    const payload = await fetchHandleDataFromAPI(INSTANCE.rednote!, 'post', rawUrl);
 
     logger.debug("PROCESS RESPONSE DATA", JSON.stringify(payload));
 
