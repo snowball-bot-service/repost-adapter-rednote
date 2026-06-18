@@ -121,6 +121,7 @@ const adapter: Adapter = {
     INSTANCE.rednote = new RednoteManager({
       http: INSTANCE.http,
       logger: ctx.logger,
+      helper: ctx.helper,
     });
 
     // 注册转发请求处理器

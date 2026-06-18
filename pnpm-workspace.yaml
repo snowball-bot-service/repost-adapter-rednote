@@ -3,3 +3,4 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - '@snowball-bot/repost-adapter@1.0.4'
   - '@snowball-bot/repost-adapter@1.0.10'
+  - '@snowball-bot/repost-adapter@1.0.11'
