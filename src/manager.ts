@@ -34,7 +34,7 @@ export function extractHandleId(source: string): [RepostMethod?, string?] {
   }
 
   // 短链: xhslink.com/.../{code} —— 取路径最后一段作临时 id
-  if (url.hostname.includes('xhslink.com')) {
+  if (url.hostname.includes('xhslink.cn')) {
     const code = url.pathname.split('/').filter(Boolean).pop();
     return code ? ['post', code] : [];
   }
