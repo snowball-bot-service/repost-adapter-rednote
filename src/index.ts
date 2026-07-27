@@ -82,7 +82,7 @@ const adapter: Adapter = {
   manifest: {
     name: `repost-adapter-${CONST.provider}`,
     provider: CONST.provider,
-    whitelistHosts: ['xiaohongshu.com', 'xhslink.com'],
+    whitelistHosts: ['xiaohongshu.com', 'xhslink.com', 'xhslink.cn'],
     version: 1,
     author: 'Rominwolf',
     billing: {
