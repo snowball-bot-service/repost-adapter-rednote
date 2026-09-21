@@ -44,6 +44,7 @@ export type {
 
 interface AdapterOptions {
   apiKey?: string;
+  rednoteCookie: string;
 }
 
 /**
@@ -104,18 +105,21 @@ const adapter: Adapter = {
    * @param ctx
    */
   async initState(ctx: AdapterContext) {
-    // 读取配置（可选）。配置由核心通过 `ctx.config(key)` 提供。
-    // 比如 API key、限流参数等，建议把所有可调项都从 config 取。
-    const apiKey = ctx.config<string>('apiKey');
+    const rednoteCookie = ctx.config<string>('rednoteCookie') ?? "";
 
     // 创建 HTTP 客户端 (基于 fetch), 统一处理 baseUrl / 鉴权 / 超时 / 重试
     INSTANCE.http = new HttpManager({
       baseUrl: CONST.apiBaseURL,
       timeoutMs: CONST.apiTimeout,
       retries: CONST.apiRetries,
-      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+      // headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+      headers: {
+        "Cookie": rednoteCookie,
+      },
       logger: ctx.logger,
     });
+
+    console.log("REDNOTE_COOKIE", rednoteCookie);
 
     // 创建小红书工具类, 复用上面的 HTTP 客户端 (其内部均使用绝对 URL, 不受 baseUrl 影响)
     INSTANCE.rednote = new RednoteManager({
@@ -175,7 +179,7 @@ async function handleRepostRequest(
     req.source
   );
 
-  logger.debug('HANDLE DATA', handleData);
+  logger.debug('HANDLE DATA', JSON.stringify(handleData));
 
   // 优先用负载里的真实 noteId 作 postId, 保证长/短链得到一致结果;
   // 负载缺失时回退到 extractHandleId 的临时 id

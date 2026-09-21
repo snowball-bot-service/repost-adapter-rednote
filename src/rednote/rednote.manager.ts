@@ -61,11 +61,11 @@ export class RednoteManager {
     link: string
   ): Promise<RednoteItemRootPayload | null> {
     try {
-      const cookie = await this.getAnonymousCookies();
-      this.logger?.debug('REDNOTE COOKIE', cookie);
+      // const cookie = await this.getAnonymousCookies();
+      // this.logger?.debug('REDNOTE COOKIE', cookie);
       const html = await this.http.getText(link, {
         headers: {
-          Cookie: cookie,
+          // Cookie: cookie,
           'User-Agent': BROWSER_UA,
         },
       });
@@ -116,14 +116,14 @@ export class RednoteManager {
    */
   private async getAnonymousCookies(): Promise<string> {
     try {
-      const now = Date.now();
-
       // 命中未过期缓存则直接返回
       const cacheCookies = await this.helper.cacheGet(COOKIE_FIELD);
-      if (cacheCookies) {
-        return cacheCookies;
-      }
+      if (cacheCookies) return cacheCookies;
+    } catch (e) {
+      this.logger?.warn(`[rednote] Cache Get failed: ${String(e)}`);
+    }
 
+    try {
       // 缓存缺失 / 过期，在线获取
       const response = await this.http.get(HOMEPAGE_URL, {
         headers: { 'User-Agent': BROWSER_UA },
@@ -134,11 +134,17 @@ export class RednoteManager {
         .map((cookie) => cookie.split(';')[0])
         .join('; ');
 
-      await this.helper.cacheSet(
-        COOKIE_FIELD,
-        newCookies,
-        dayjs().add(COOKIE_TTL_MS, 'ms').toDate()
-      );
+      this.logger?.debug(`[rednote] cookies: ${newCookies}`);
+
+      try {
+        await this.helper.cacheSet(
+          COOKIE_FIELD,
+          newCookies,
+          dayjs().add(COOKIE_TTL_MS, 'ms').toDate()
+        );
+      } catch (e) {
+        this.logger?.warn(`[rednote] Cache Set failed: ${String(e)}`);
+      }
 
       return newCookies;
     } catch (e) {
