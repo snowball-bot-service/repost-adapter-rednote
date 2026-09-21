@@ -65,10 +65,10 @@ export class RednoteManager {
       // this.logger?.debug('REDNOTE COOKIE', cookie);
       const html = await this.http.getText(link, {
         headers: {
-          // Cookie: cookie,
           'User-Agent': BROWSER_UA,
         },
       });
+
       return this.parseGlobalInitialState(html);
     } catch (e) {
       this.logger?.error(`[rednote] fetchNoteToPayload failed: ${String(e)}`);

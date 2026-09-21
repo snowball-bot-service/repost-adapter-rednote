@@ -6,11 +6,12 @@ import {
   AdapterRepostRequestParams,
   AdapterRepostResponsePayload,
   ProcessMediaInfo,
+  RepostMethod,
   SocialProvider,
 } from '@snowball-bot/repost-adapter';
 import { HttpManager } from './utils/http';
 import { extractHandleId, fetchHandleDataFromAPI } from './manager';
-import { HOMEPAGE_URL, RednoteManager } from './rednote/rednote.manager';
+import { RednoteManager } from './rednote/rednote.manager';
 import { NoteData } from './rednote/rednote.type';
 import {
   FetchHandleDataFailedException,
@@ -105,7 +106,7 @@ const adapter: Adapter = {
    * @param ctx
    */
   async initState(ctx: AdapterContext) {
-    const rednoteCookie = ctx.config<string>('rednoteCookie') ?? "";
+    const rednoteCookie = ctx.config<string>('rednoteCookie') ?? '';
 
     // 创建 HTTP 客户端 (基于 fetch), 统一处理 baseUrl / 鉴权 / 超时 / 重试
     INSTANCE.http = new HttpManager({
@@ -114,12 +115,12 @@ const adapter: Adapter = {
       retries: CONST.apiRetries,
       // headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
       headers: {
-        "Cookie": rednoteCookie,
+        Cookie: rednoteCookie,
       },
       logger: ctx.logger,
     });
 
-    console.log("REDNOTE_COOKIE", rednoteCookie);
+    console.log('REDNOTE_COOKIE', rednoteCookie);
 
     // 创建小红书工具类, 复用上面的 HTTP 客户端 (其内部均使用绝对 URL, 不受 baseUrl 影响)
     INSTANCE.rednote = new RednoteManager({
@@ -166,11 +167,31 @@ async function handleRepostRequest(
   logger.debug(`[${CONST.provider}] fetching ${req.source}`);
 
   // 从 req.source 解析出 Handle Info
-  const [handleMethod, handleId] = extractHandleId(req.source);
+  let [handleMethod, handleId] = extractHandleId(req.source);
 
   // 不支持的转发模式
   if (!handleMethod || !handleId || handleMethod === 'live')
-    throw new UnsupportedMethodException(handleMethod, handleId);
+    throw new UnsupportedMethodException(
+      handleMethod as RepostMethod,
+      handleId
+    );
+
+  // 对于短链，拿到重定向...
+  if (handleMethod === 'short') {
+    const response = await INSTANCE.http!.get(req.source);
+    ctx.logger?.debug('[rednote] Raw Short Response', response);
+    req.source = response.url;
+
+    // 需要先登录后才能重定向时，直接拿 queryParam = redirectPath
+    if (req.source.includes("www.xiaohongshu.com/login")) {
+      const redirect = new URL(req.source);
+      req.source = (redirect.searchParams.get("redirectPath") ?? "/").replace("http://", "https://");
+    }
+
+    handleMethod = "post";
+  }
+
+  logger.debug(`[${CONST.provider}] final fetching... ${req.source}`);
 
   // 调用小红书工具类拿到原始数据 (传入完整链接, 含 xsec_token 等查询参数)
   const handleData = await fetchHandleDataFromAPI(
@@ -323,7 +344,12 @@ function extractNoteMedias(note: NoteData): ProcessMediaInfo[] {
     av1?: { masterUrl: string }[];
     h266?: { masterUrl: string }[];
   }): string | undefined => {
-    for (const variants of [stream?.h265, stream?.h264, stream?.av1, stream?.h266]) {
+    for (const variants of [
+      stream?.h265,
+      stream?.h264,
+      stream?.av1,
+      stream?.h266,
+    ]) {
       const url = variants?.[0]?.masterUrl;
       if (url) return url;
     }
@@ -364,9 +390,13 @@ async function handleProcessingRequest(
 
   // 获取原图 / 原视频: 抓取笔记并返回其全部媒体资源
   if (method === 'strawberry' && repostMethod === 'post') {
-    const payload = await fetchHandleDataFromAPI(INSTANCE.rednote!, 'post', rawUrl);
+    const payload = await fetchHandleDataFromAPI(
+      INSTANCE.rednote!,
+      'post',
+      rawUrl
+    );
 
-    logger.debug("PROCESS RESPONSE DATA", JSON.stringify(payload));
+    logger.debug('PROCESS RESPONSE DATA', JSON.stringify(payload));
 
     const note =
       payload?.note?.noteDetailMap?.[payload.note.currentNoteId]?.note;
@@ -378,7 +408,7 @@ async function handleProcessingRequest(
       );
     }
 
-    logger.debug("PROCESS NOTE DATA", JSON.stringify(note));
+    logger.debug('PROCESS NOTE DATA', JSON.stringify(note));
 
     return {
       method,

@@ -25,7 +25,7 @@ export function extractURL(source: string) {
  * @param source 原始 URL
  * @return [转发模式, Handle ID]; 无法识别返回空元组
  */
-export function extractHandleId(source: string): [RepostMethod?, string?] {
+export function extractHandleId(source: string): [(RepostMethod | "short")?, string?] {
   let url: URL;
   try {
     url = extractURL(source);
@@ -36,7 +36,7 @@ export function extractHandleId(source: string): [RepostMethod?, string?] {
   // 短链: xhslink.com/.../{code} —— 取路径最后一段作临时 id
   if (url.hostname.includes('xhslink.cn')) {
     const code = url.pathname.split('/').filter(Boolean).pop();
-    return code ? ['post', code] : [];
+    return code ? ['short', code] : [];
   }
 
   // 长链: xiaohongshu.com, 按首段路径分流
