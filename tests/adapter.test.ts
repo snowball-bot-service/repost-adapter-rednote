@@ -4,8 +4,42 @@ import type {
   ProcessHandler,
   RepostHandler,
 } from '@snowball-bot/repost-adapter';
-import adapter from '../src';
+import adapter, { parseCount } from '../src';
 import { extractHandleId } from '../src/manager';
+
+// 拦截 xhs CLI 调用
+const { execFileMock } = vi.hoisted(() => ({ execFileMock: vi.fn() }));
+vi.mock('node:child_process', () => ({ execFile: execFileMock }));
+
+/** 让 CLI 调用以给定 JSON 作为 stdout 返回 */
+function mockCli(response: unknown, exitCode = 0) {
+  execFileMock.mockImplementation((_file, _args, _opts, callback) => {
+    const error = exitCode
+      ? Object.assign(new Error('Command failed'), { code: exitCode })
+      : null;
+    callback(error, JSON.stringify(response), '');
+  });
+}
+
+/** 构造 feed API 形态的 `xhs read --json` 成功响应 */
+function feedResponse(noteCard: Record<string, unknown>) {
+  return {
+    ok: true,
+    schema_version: '1',
+    data: {
+      cursor_score: '',
+      current_time: 0,
+      items: [
+        {
+          id: noteCard.note_id,
+          model_type: 'note',
+          ignore: false,
+          note_card: noteCard,
+        },
+      ],
+    },
+  };
+}
 
 function createMockContext(
   configValues: Record<string, unknown> = {}
@@ -49,9 +83,10 @@ function createMockContext(
   };
 }
 
+const requester = { userId: 'U', nickname: 'N' };
+
 describe('adapter', () => {
   it('exposes correct manifest', () => {
-    // TODO: 改成你自己的预期值
     expect(adapter.manifest.name).toMatch(/^repost-adapter-/);
     expect(adapter.manifest.whitelistHosts.length).toBeGreaterThan(0);
   });
@@ -66,62 +101,128 @@ describe('adapter', () => {
   });
 
   it('handles a request, deriving postId from payload', async () => {
-    // 模拟页面 __INITIAL_STATE__ 负载
-    const state = {
-      note: {
-        currentNoteId: 'NOTE_FROM_PAYLOAD',
-        noteDetailMap: {
-          NOTE_FROM_PAYLOAD: {
-            note: {
-              noteId: 'NOTE_FROM_PAYLOAD',
-              title: '标题',
-              desc: '正文内容',
-              time: 1700000000000,
-              user: { userId: 'AUTHOR_ID', nickname: '作者昵称', avatar: 'https://x/a.jpg' },
-              interactInfo: {
-                likedCount: '120',
-                collectedCount: '30',
-                commentCount: '8',
-                shareCount: '2',
-              },
-              imageList: [
-                { urlDefault: 'https://x/1.jpg' },
-                { urlDefault: 'https://x/2.jpg' },
-              ],
-            },
-          },
+    mockCli(
+      feedResponse({
+        note_id: 'NOTE_FROM_PAYLOAD',
+        title: '标题',
+        desc: '正文内容',
+        time: 1700000000000,
+        user: {
+          user_id: 'AUTHOR_ID',
+          nickname: '作者昵称',
+          avatar: 'https://x/a.jpg',
         },
-      },
-    };
-    const html = `<html><script>window.__INITIAL_STATE__ = ${JSON.stringify(state)}</script></html>`;
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => new Response(html, { status: 200 }))
+        interact_info: {
+          liked_count: '4.5万',
+          collected_count: '30',
+          comment_count: '8',
+          share_count: '2',
+        },
+        image_list: [
+          { url_default: 'https://x/1.jpg', url: '' },
+          { url_default: 'https://x/2.jpg', url: '' },
+        ],
+      })
     );
 
-    const { ctx, getHandler } = createMockContext({ apiKey: 'test-key' });
+    const { ctx, getHandler } = createMockContext();
     await adapter.initState(ctx);
 
     const source =
-      'https://www.xiaohongshu.com/discovery/item/IDFROMURL?app_platform=android';
-    const result = await getHandler()({
-      source,
-      code: 'test',
-      requester: {
-        userId: 'REQUESTER_USERID',
-        nickname: 'REQUESTER_NICKNAME',
-      },
-    });
+      'https://www.xiaohongshu.com/discovery/item/IDFROMURL?xsec_token=abc';
+    const result = await getHandler()({ source, code: 'test', requester });
+
+    // CLI 以 `xhs read <URL> --json` 调用
+    expect(execFileMock.mock.calls[0][0]).toBe('xhs');
+    expect(execFileMock.mock.calls[0][1]).toEqual(['read', source, '--json']);
 
     expect(result).not.toBeNull();
     expect(result!.originalUrl).toBe(source);
-    // postId 应取自负载的 currentNoteId, 而非 URL 路径里的临时 id
+    // postId 应取自负载的 note_id, 而非 URL 路径里的临时 id
     expect(result!.postId).toBe('NOTE_FROM_PAYLOAD');
-    // fnBuildPost 应从负载映射出作者/正文/图片组
     expect(result!.author.nickname).toBe('作者昵称');
     expect(result!.title).toBe('标题');
     expect(result!.content).toBe('正文内容');
     expect(result!.images).toEqual(['https://x/1.jpg', 'https://x/2.jpg']);
+    expect(result!.badges![0][0].name).toBe('点赞 45000 人');
+  });
+
+  it('resolves short links to the long link before calling the CLI', async () => {
+    const longUrl =
+      'https://www.xiaohongshu.com/discovery/item/NID?xsec_token=TOKEN&xsec_source=app_share';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const res = new Response('', { status: 200 });
+        Object.defineProperty(res, 'url', { value: longUrl });
+        return res;
+      })
+    );
+    mockCli(feedResponse({ note_id: 'NID', image_list: [] }));
+
+    const { ctx, getHandler } = createMockContext();
+    await adapter.initState(ctx);
+
+    const result = await getHandler()({
+      source: 'https://xhslink.cn/o/Au0UbrL4ZPP',
+      code: 'test',
+      requester,
+    });
+
+    expect(execFileMock.mock.calls[0][1]).toEqual(['read', longUrl, '--json']);
+    expect(result!.method).toBe('post');
+    expect(result!.postId).toBe('NID');
+  });
+
+  it('accepts the HTML-fallback (camelCase) payload shape', async () => {
+    mockCli({
+      ok: true,
+      schema_version: '1',
+      data: {
+        noteId: 'HTML_NID',
+        title: 'T',
+        desc: 'D',
+        imageList: [{ urlDefault: 'https://x/1.jpg' }],
+      },
+    });
+
+    const { ctx, getHandler } = createMockContext();
+    await adapter.initState(ctx);
+
+    const result = await getHandler()({
+      source: 'https://www.xiaohongshu.com/explore/HTML_NID?xsec_token=abc',
+      code: 'test',
+      requester,
+    });
+
+    expect(result!.postId).toBe('HTML_NID');
+    expect(result!.cover).toBe('https://x/1.jpg');
+  });
+
+  it('throws XhsCliException on a CLI error response', async () => {
+    mockCli(
+      {
+        ok: false,
+        schema_version: '1',
+        error: { code: 'api_error', message: 'Note not found' },
+      },
+      1
+    );
+
+    const { ctx, getHandler } = createMockContext();
+    await adapter.initState(ctx);
+
+    await expect(
+      getHandler()({
+        source: 'https://www.xiaohongshu.com/explore/BAD?xsec_token=abc',
+        code: 'test',
+        requester,
+      })
+    ).rejects.toMatchObject({
+      name: 'XhsCliException',
+      code: 'api_error',
+      msg: 'Note not found',
+    });
   });
 });
 
@@ -141,9 +242,9 @@ describe('extractHandleId', () => {
   });
 
   it('parses short xhslink links to a provisional id', () => {
-    expect(extractHandleId('http://xhslink.com/o/d8PISjsVoB')).toEqual([
-      'post',
-      'd8PISjsVoB',
+    expect(extractHandleId('https://xhslink.cn/o/Au0UbrL4ZPP')).toEqual([
+      'short',
+      'Au0UbrL4ZPP',
     ]);
   });
 
@@ -161,40 +262,32 @@ describe('extractHandleId', () => {
 });
 
 describe('handleProcessingRequest (strawberry + post)', () => {
-  function stubFetchWithNote(note: unknown) {
-    const state = {
-      note: {
-        currentNoteId: 'NID',
-        noteDetailMap: { NID: { note } },
-      },
-    };
-    const html = `<html><script>window.__INITIAL_STATE__ = ${JSON.stringify(state)}</script></html>`;
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => new Response(html, { status: 200 }))
-    );
-  }
-
+  const rawUrl = 'https://www.xiaohongshu.com/discovery/item/NID?xsec_token=abc';
   const baseReq = {
     method: 'strawberry' as const,
     repostMethod: 'post' as const,
-    source: 'https://www.xiaohongshu.com/discovery/item/NID',
+    source: 'NID',
     code: 'c1',
-    requester: { userId: 'U', nickname: 'N' },
+    requester,
+    extra: { rawUrl },
   };
 
   it('returns every image of an image note', async () => {
-    stubFetchWithNote({
-      imageList: [
-        { urlDefault: 'https://x/1.jpg', livePhoto: false },
-        { urlDefault: 'https://x/2.jpg', livePhoto: false },
-      ],
-    });
+    mockCli(
+      feedResponse({
+        note_id: 'NID',
+        image_list: [
+          { url_default: 'https://x/1.jpg', live_photo: false },
+          { url_default: 'https://x/2.jpg', live_photo: false },
+        ],
+      })
+    );
     const { ctx, getProcessHandler } = createMockContext();
     await adapter.initState(ctx);
 
     const result = await getProcessHandler()(baseReq);
 
+    expect(execFileMock.mock.calls[0][1]).toEqual(['read', rawUrl, '--json']);
     expect(result).not.toBeNull();
     expect(result!.medias).toEqual([
       { type: 'image', url: 'https://x/1.jpg' },
@@ -203,15 +296,18 @@ describe('handleProcessingRequest (strawberry + post)', () => {
   });
 
   it('returns the live-photo video alongside its still image', async () => {
-    stubFetchWithNote({
-      imageList: [
-        {
-          urlDefault: 'https://x/live.jpg',
-          livePhoto: true,
-          stream: { h264: [{ masterUrl: 'https://x/live.mp4' }] },
-        },
-      ],
-    });
+    mockCli(
+      feedResponse({
+        note_id: 'NID',
+        image_list: [
+          {
+            url_default: 'https://x/live.jpg',
+            live_photo: true,
+            stream: { h264: [{ master_url: 'https://x/live.mp4' }] },
+          },
+        ],
+      })
+    );
     const { ctx, getProcessHandler } = createMockContext();
     await adapter.initState(ctx);
 
@@ -224,17 +320,21 @@ describe('handleProcessingRequest (strawberry + post)', () => {
   });
 
   it('returns only the main video (h265 preferred) for a video note', async () => {
-    stubFetchWithNote({
-      imageList: [{ urlDefault: 'https://x/poster.jpg', livePhoto: false }],
-      video: {
-        media: {
-          stream: {
-            h265: [{ masterUrl: 'https://x/v265.mp4' }],
-            h264: [{ masterUrl: 'https://x/v264.mp4' }],
+    mockCli(
+      feedResponse({
+        note_id: 'NID',
+        type: 'video',
+        image_list: [{ url_default: 'https://x/poster.jpg', live_photo: false }],
+        video: {
+          media: {
+            stream: {
+              h265: [{ master_url: 'https://x/v265.mp4' }],
+              h264: [{ master_url: 'https://x/v264.mp4' }],
+            },
           },
         },
-      },
-    });
+      })
+    );
     const { ctx, getProcessHandler } = createMockContext();
     await adapter.initState(ctx);
 
@@ -246,6 +346,17 @@ describe('handleProcessingRequest (strawberry + post)', () => {
   });
 });
 
+describe('parseCount', () => {
+  it('parses plain and 万/亿 suffixed counts', () => {
+    expect(parseCount('415')).toBe(415);
+    expect(parseCount('4.5万')).toBe(45000);
+    expect(parseCount('1.2亿')).toBe(120000000);
+    expect(parseCount('')).toBe(0);
+    expect(parseCount(undefined)).toBe(0);
+  });
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
+  execFileMock.mockReset();
 });

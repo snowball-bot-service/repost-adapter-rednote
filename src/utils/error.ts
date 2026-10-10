@@ -47,3 +47,17 @@ export class UnsupportedProcessException extends SnowballException {
     super(`Unsupported Method Exception | Process: ${process} | Source: ${source}`);
   }
 }
+
+/**
+ * xhs CLI 调用失败错误
+ *
+ * code 取自 CLI 失败响应的 error.code; 进程无法启动 / 输出非 JSON 等本地错误使用 `cli_*` 前缀
+ */
+export class XhsCliException extends SnowballException {
+  constructor(
+    public readonly code: string,
+    public readonly msg: string,
+  ) {
+    super(`Xhs CLI Exception | Code: ${code} | Message: ${msg}`);
+  }
+}

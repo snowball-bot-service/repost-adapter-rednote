@@ -1,47 +1,53 @@
-export interface RednoteItemRootPayload {
-  note: Note;
+// ============================================================================
+// xhs CLI (`xhs <command> --json`) 输出结构
+// ============================================================================
+
+/** CLI 成功响应 */
+export interface XhsCliSuccess<T> {
+  ok: true;
+  schema_version: string;
+  data: T;
 }
 
-export interface Note {
-  prevRouteData: Record<string, unknown>;
-  prevRoute: string;
-  commentTarget: Record<string, unknown>;
-  isImgFullscreen: boolean;
-  gotoPage: string;
-  firstNoteId: string;
-  autoOpenNote: boolean;
-  topCommentId: string;
-  noteDetailMap: Record<string, NoteDetail>;
-  serverRequestInfo: ServerRequestInfo;
-  volume: number;
-  recommendVideoMap: Record<string, unknown>;
-  videoFeedType: string;
-  rate: number;
-  currentNoteId: string;
-  forceScrollToComment: boolean;
-  mediaWidth: number;
-  noteHeight: number;
+/** CLI 失败响应 (进程退出码非 0, 但 stdout 仍为该 JSON) */
+export interface XhsCliFailure {
+  ok: false;
+  schema_version: string;
+  error: {
+    code: string;
+    message: string;
+  };
 }
 
-export interface ServerRequestInfo {
-  state: string;
-  errorCode: number;
-  errMsg: string;
+export type XhsCliResponse<T> = XhsCliSuccess<T> | XhsCliFailure;
+
+/**
+ * `xhs read --json` 的 data 字段。
+ *
+ * CLI 内部有两条通道:
+ *   - feed API (带 xsec_token 时优先): 返回 {@link XhsFeedPayload}, 字段为 snake_case
+ *   - HTML 兜底 (feed API 失败 / 无 token): 直接返回页面 state 里的 note 对象, 字段为 camelCase
+ */
+export type XhsReadData = XhsFeedPayload | Record<string, unknown>;
+
+/** feed API 负载 */
+export interface XhsFeedPayload {
+  cursor_score: string;
+  current_time: number;
+  items: XhsFeedItem[];
 }
 
-export interface NoteDetail {
-  comments: Comments;
-  currentTime: number;
-  note: NoteData;
+export interface XhsFeedItem {
+  id: string;
+  model_type: string;
+  ignore: boolean;
+  /** 字段与 {@link NoteData} 一一对应, 仅命名为 snake_case */
+  note_card: Record<string, unknown>;
 }
 
-export interface Comments {
-  list: unknown[];
-  cursor: string;
-  hasMore: boolean;
-  loading: boolean;
-  firstRequestFinish: boolean;
-}
+// ============================================================================
+// 归一化后的笔记数据 (camelCase)
+// ============================================================================
 
 export interface NoteData {
   xsecToken: string;

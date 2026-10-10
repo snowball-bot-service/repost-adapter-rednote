@@ -1,20 +1,12 @@
-import * as vm from 'node:vm';
-import type { Helper, ILogger } from '@snowball-bot/repost-adapter';
+import type { ILogger } from '@snowball-bot/repost-adapter';
 import { HttpManager } from '../utils/http';
-import { RednoteItemRootPayload } from './rednote.type';
-import dayjs from 'dayjs';
-
-/** 匿名 Cookie 缓存时长（24 小时，毫秒） */
-const COOKIE_TTL_MS = 24 * 60 * 60 * 1000;
-const COOKIE_FIELD = 'cookies';
-
-/** 小红书首页地址，用于获取匿名 Cookie */
-export const HOMEPAGE_URL = 'https://www.xiaohongshu.com/';
+import { NoteData, XhsFeedPayload, XhsReadData } from './rednote.type';
+import { XhsCli } from './xhs-cli';
+import { XhsCliException } from '../utils/error';
 
 /**
  * 浏览器 User-Agent。
- * 小红书需要带 UA 才会返回内嵌 `__INITIAL_STATE__` 的 HTML，
- * 这一点原 Midway axios 客户端由默认头隐式提供，迁移后必须显式补上。
+ * 短链跳转依赖 UA, 缺失时小红书可能返回非标准页面。
  */
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
@@ -22,134 +14,105 @@ const BROWSER_UA =
 
 /** {@link RednoteManager} 构造配置 */
 export interface RednoteManagerOptions {
-  /** 本项目的 HTTP 客户端 (基于 fetch) */
+  /** 本项目的 HTTP 客户端 (基于 fetch), 仅用于短链跳转 */
   http: HttpManager;
+  /** xhs CLI 封装, 用于笔记解析 */
+  cli: XhsCli;
   /** 日志器 (通常传入 ctx.logger) */
   logger?: ILogger;
-  /**
-   * 服务体
-   */
-  helper: Helper;
 }
 
 /**
  * 小红书工具类。
  *
- * 由 Midway 版本 (`rednote-midway`) 改造而来，去除了框架依赖：
- *   - 用本项目的 {@link HttpManager} 替代 `@midwayjs/axios` 的 HttpService
- *   - 用进程内 TTL 缓存替代 CachedManager 做匿名 Cookie 缓存
- *
- * 核心能力：抓取笔记页 HTML → 解析内嵌的 `window.__INITIAL_STATE__` → 返回结构化负载。
+ *   - 短链 -> 长链: 走 HTTP 跟随 302, 拿到带 xsec_token 的真实链接
+ *   - 笔记解析: 调用 `xhs read <URL> --json`, 归一化为 {@link NoteData}
  */
 export class RednoteManager {
   private readonly http: HttpManager;
-  private readonly helper: Helper;
+  private readonly cli: XhsCli;
   private readonly logger?: ILogger;
 
   constructor(options: RednoteManagerOptions) {
     this.http = options.http;
+    this.cli = options.cli;
     this.logger = options.logger;
-    this.helper = options.helper;
   }
 
   /**
-   * 将小红书链接解析成消息负载
-   * @param link 笔记页绝对 URL
-   * @return 成功返回负载，失败返回 null
+   * 将短链 (xhslink.cn/o/{code}) 解析为长链 (含 xsec_token 等查询参数)
+   * @param link 短链
+   * @return 长链
    */
-  public async fetchNoteToPayload(
-    link: string
-  ): Promise<RednoteItemRootPayload | null> {
-    try {
-      // const cookie = await this.getAnonymousCookies();
-      // this.logger?.debug('REDNOTE COOKIE', cookie);
-      const html = await this.http.getText(link, {
-        headers: {
-          'User-Agent': BROWSER_UA,
-        },
-      });
+  public async resolveShortLink(link: string): Promise<string> {
+    const response = await this.http.get(link, {
+      headers: { 'User-Agent': BROWSER_UA },
+    });
+    let resolved = response.url;
 
-      return this.parseGlobalInitialState(html);
-    } catch (e) {
-      this.logger?.error(`[rednote] fetchNoteToPayload failed: ${String(e)}`);
-      return null;
-    }
-  }
-
-  /**
-   * 获取 HTML 里的 __INITIAL_STATE__ 并解析成对象
-   * @param html
-   * @private
-   * @return 成功返回对象，失败返回 null
-   */
-  private parseGlobalInitialState(html: string): RednoteItemRootPayload | null {
-    try {
-      const match = html.match(
-        /window\.__INITIAL_STATE__\s*=\s*(\{.*?}<\/script>)/s
+    // 需要先登录后才能重定向时，直接拿 queryParam = redirectPath
+    if (resolved.includes('www.xiaohongshu.com/login')) {
+      const redirect = new URL(resolved);
+      resolved = (redirect.searchParams.get('redirectPath') ?? '/').replace(
+        'http://',
+        'https://'
       );
-
-      if (match) {
-        const script =
-          'window.__INITIAL_STATE__ = ' + match[1].replace('</script>', '');
-        const sandbox: { window: Record<string, unknown> } = {
-          window: {},
-        };
-        vm.createContext(sandbox);
-        vm.runInContext(script, sandbox);
-        return sandbox.window.__INITIAL_STATE__ as RednoteItemRootPayload;
-      } else {
-        this.logger?.error('[rednote] Not match HTML');
-        return null;
-      }
-    } catch (e) {
-      this.logger?.error(
-        `[rednote] parseGlobalInitialState failed: ${String(e)}`
-      );
-      return null;
     }
+
+    if (!new URL(resolved).searchParams.get('xsec_token')) {
+      this.logger?.warn(
+        `[rednote] resolved link has no xsec_token: ${resolved}`
+      );
+    }
+
+    return resolved;
   }
 
   /**
-   * 获取 / 生成匿名 Cookies。
-   * 命中未过期的进程内缓存则直接返回，否则在线拉取并缓存 24 小时。
-   * @private
+   * 通过 CLI 解析笔记
+   * @param link 笔记长链 (需含 xsec_token)
+   * @return 归一化后的笔记数据
+   * @throws XhsCliException CLI 调用失败 / 负载中无笔记
    */
-  private async getAnonymousCookies(): Promise<string> {
-    try {
-      // 命中未过期缓存则直接返回
-      const cacheCookies = await this.helper.cacheGet(COOKIE_FIELD);
-      if (cacheCookies) return cacheCookies;
-    } catch (e) {
-      this.logger?.warn(`[rednote] Cache Get failed: ${String(e)}`);
+  public async readNote(link: string): Promise<NoteData> {
+    const data = await this.cli.run<XhsReadData>(['read', link]);
+    const note = pickRawNote(data);
+    if (!note) {
+      throw new XhsCliException('note_not_found', `no note in response: ${link}`);
     }
-
-    try {
-      // 缓存缺失 / 过期，在线获取
-      const response = await this.http.get(HOMEPAGE_URL, {
-        headers: { 'User-Agent': BROWSER_UA },
-      });
-      const cookiesList = response.headers.getSetCookie();
-
-      const newCookies = cookiesList
-        .map((cookie) => cookie.split(';')[0])
-        .join('; ');
-
-      this.logger?.debug(`[rednote] cookies: ${newCookies}`);
-
-      try {
-        await this.helper.cacheSet(
-          COOKIE_FIELD,
-          newCookies,
-          dayjs().add(COOKIE_TTL_MS, 'ms').toDate()
-        );
-      } catch (e) {
-        this.logger?.warn(`[rednote] Cache Set failed: ${String(e)}`);
-      }
-
-      return newCookies;
-    } catch (e) {
-      this.logger?.warn(`[rednote] getAnonymousCookies failed: ${String(e)}`);
-      return '';
-    }
+    return camelizeKeys(note) as NoteData;
   }
+}
+
+/**
+ * 从 `xhs read` 的 data 中取出原始笔记对象。
+ *   - feed API: data.items[].note_card (snake_case)
+ *   - HTML 兜底: data 本身即笔记 (camelCase)
+ */
+function pickRawNote(data: XhsReadData): Record<string, unknown> | null {
+  if (Array.isArray((data as XhsFeedPayload).items)) {
+    const items = (data as XhsFeedPayload).items;
+    const item = items.find((i) => i.model_type === 'note') ?? items[0];
+    return item?.note_card ?? null;
+  }
+  if (data && typeof data === 'object' && 'noteId' in data) {
+    return data;
+  }
+  return null;
+}
+
+/** snake_case -> camelCase */
+function toCamel(key: string): string {
+  return key.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase());
+}
+
+/** 递归将对象键名转为 camelCase (已是 camelCase 的键保持不变) */
+export function camelizeKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(camelizeKeys);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [toCamel(k), camelizeKeys(v)])
+    );
+  }
+  return value;
 }

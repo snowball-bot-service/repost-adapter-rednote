@@ -12,6 +12,7 @@ import {
 import { HttpManager } from './utils/http';
 import { extractHandleId, fetchHandleDataFromAPI } from './manager';
 import { RednoteManager } from './rednote/rednote.manager';
+import { XhsCli } from './rednote/xhs-cli';
 import { NoteData } from './rednote/rednote.type';
 import {
   FetchHandleDataFailedException,
@@ -43,28 +44,26 @@ export type {
 //
 // ============================================================================
 
-interface AdapterOptions {
-  apiKey?: string;
-  rednoteCookie: string;
-}
-
 /**
  * 常量仓库
  * @param apiBaseURL API 基础地址
  * @param provider 提供商
  * @param apiTimeout API 超时时间（毫秒）
  * @param apiRetries API 重试次数
+ * @param cliTimeout xhs CLI 单次调用超时时间（毫秒）
  */
 const CONST: {
   apiBaseURL: string;
   provider: SocialProvider;
   apiTimeout: number;
   apiRetries: number;
+  cliTimeout: number;
 } = {
   provider: 'rednote',
   apiBaseURL: 'https://www.xiaohongshu.com',
   apiTimeout: 5000,
   apiRetries: 1,
+  cliTimeout: 30000,
 };
 
 /**
@@ -104,29 +103,32 @@ const adapter: Adapter = {
   /**
    * 适配器初始化时触发，在此处注册各类资源
    * @param ctx
+   *
+   * 可选配置:
+   *   - rednoteCookie: 短链跳转时携带的 Cookie
+   *   - xhsBinary: xhs CLI 可执行文件路径 (DEF: 从 PATH 查找 `xhs`)
    */
   async initState(ctx: AdapterContext) {
     const rednoteCookie = ctx.config<string>('rednoteCookie') ?? '';
 
-    // 创建 HTTP 客户端 (基于 fetch), 统一处理 baseUrl / 鉴权 / 超时 / 重试
+    // 创建 HTTP 客户端 (基于 fetch), 仅用于短链 -> 长链跳转
     INSTANCE.http = new HttpManager({
       baseUrl: CONST.apiBaseURL,
       timeoutMs: CONST.apiTimeout,
       retries: CONST.apiRetries,
-      // headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
-      headers: {
-        Cookie: rednoteCookie,
-      },
+      headers: rednoteCookie ? { Cookie: rednoteCookie } : undefined,
       logger: ctx.logger,
     });
 
-    console.log('REDNOTE_COOKIE', rednoteCookie);
-
-    // 创建小红书工具类, 复用上面的 HTTP 客户端 (其内部均使用绝对 URL, 不受 baseUrl 影响)
+    // 创建小红书工具类: 短链走 HTTP, 笔记解析走 xhs CLI
     INSTANCE.rednote = new RednoteManager({
       http: INSTANCE.http,
+      cli: new XhsCli({
+        binary: ctx.config<string>('xhsBinary'),
+        timeoutMs: CONST.cliTimeout,
+        logger: ctx.logger,
+      }),
       logger: ctx.logger,
-      helper: ctx.helper,
     });
 
     // 注册转发请求处理器
@@ -176,24 +178,15 @@ async function handleRepostRequest(
       handleId
     );
 
-  // 对于短链，拿到重定向...
+  // 对于短链，先解析成带 xsec_token 的长链
   if (handleMethod === 'short') {
-    const response = await INSTANCE.http!.get(req.source);
-    ctx.logger?.debug('[rednote] Raw Short Response', response);
-    req.source = response.url;
-
-    // 需要先登录后才能重定向时，直接拿 queryParam = redirectPath
-    if (req.source.includes("www.xiaohongshu.com/login")) {
-      const redirect = new URL(req.source);
-      req.source = (redirect.searchParams.get("redirectPath") ?? "/").replace("http://", "https://");
-    }
-
-    handleMethod = "post";
+    req.source = await INSTANCE.rednote!.resolveShortLink(req.source);
+    handleMethod = 'post';
   }
 
   logger.debug(`[${CONST.provider}] final fetching... ${req.source}`);
 
-  // 调用小红书工具类拿到原始数据 (传入完整链接, 含 xsec_token 等查询参数)
+  // 调用小红书工具类拿到笔记数据 (传入完整长链, 含 xsec_token 等查询参数)
   const handleData = await fetchHandleDataFromAPI(
     INSTANCE.rednote!,
     handleMethod,
@@ -204,16 +197,14 @@ async function handleRepostRequest(
 
   // 优先用负载里的真实 noteId 作 postId, 保证长/短链得到一致结果;
   // 负载缺失时回退到 extractHandleId 的临时 id
-  const postId = handleData?.note?.currentNoteId || handleId;
+  const postId = handleData?.noteId || handleId;
 
   // 函数：构建 Post
   const fnBuildPost = (): Omit<
     AdapterRepostResponsePayload<RepostExtraParams>,
     'postId' | 'method' | 'code' | 'originalUrl' | 'provider' | 'requester'
   > => {
-    // 从负载里取出当前笔记的 NoteData
-    const note =
-      handleData?.note?.noteDetailMap?.[handleData.note.currentNoteId]?.note;
+    const note = handleData;
     if (!note) {
       throw new FetchHandleDataFailedException(
         'post',
@@ -229,8 +220,8 @@ async function handleRepostRequest(
       .map((img) => img.urlDefault || img.url)
       .filter(Boolean);
 
-    // 互动数为字符串, 转成数字交给 extraHumanable 做人类可读格式化
-    const toNum = (value?: string) => Number.parseInt(value ?? '0', 10) || 0;
+    // 互动数为字符串 (eg. "415" / "4.5万"), 转成数字交给 extraHumanable 做人类可读格式化
+    const toNum = parseCount;
 
     return {
       // NoteData.time 为 unix 毫秒时间戳
@@ -329,6 +320,19 @@ async function handleRepostRequest(
 }
 
 /**
+ * 解析互动数字符串: "415" -> 415, "4.5万" -> 45000, "1.2亿" -> 120000000
+ */
+export function parseCount(value?: string): number {
+  const match = (value ?? '').trim().match(/^([\d.]+)\s*(万|w|亿)?/i);
+  if (!match) return 0;
+  const num = Number.parseFloat(match[1]);
+  if (!Number.isFinite(num)) return 0;
+  const unit = match[2]?.toLowerCase();
+  const multiplier = unit === '亿' ? 1e8 : unit ? 1e4 : 1;
+  return Math.round(num * multiplier);
+}
+
+/**
  * 从 NoteData 收集全部媒体资源 (图片 / 视频 / 实况视频), 转成进程媒体列表。
  *
  *   - 视频笔记: 取主视频 (流优先级 h265 体积更小 > h264 > av1 > h266)
@@ -390,16 +394,11 @@ async function handleProcessingRequest(
 
   // 获取原图 / 原视频: 抓取笔记并返回其全部媒体资源
   if (method === 'strawberry' && repostMethod === 'post') {
-    const payload = await fetchHandleDataFromAPI(
+    const note = await fetchHandleDataFromAPI(
       INSTANCE.rednote!,
       'post',
       rawUrl
     );
-
-    logger.debug('PROCESS RESPONSE DATA', JSON.stringify(payload));
-
-    const note =
-      payload?.note?.noteDetailMap?.[payload.note.currentNoteId]?.note;
     if (!note) {
       throw new FetchHandleDataFailedException(
         'post',
