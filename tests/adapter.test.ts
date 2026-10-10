@@ -199,6 +199,29 @@ describe('adapter', () => {
     expect(result!.cover).toBe('https://x/1.jpg');
   });
 
+  it('falls back to ~/.local/bin when xhs is not on PATH', async () => {
+    const ok = feedResponse({ note_id: 'NID', image_list: [] });
+    execFileMock.mockImplementation((file, _args, _opts, callback) => {
+      if (file === 'xhs') {
+        callback(Object.assign(new Error('spawn xhs ENOENT'), { code: 'ENOENT' }), '', '');
+      } else {
+        callback(null, JSON.stringify(ok), '');
+      }
+    });
+
+    const { ctx, getHandler } = createMockContext();
+    await adapter.initState(ctx);
+
+    const result = await getHandler()({
+      source: 'https://www.xiaohongshu.com/explore/NID?xsec_token=abc',
+      code: 'test',
+      requester,
+    });
+
+    expect(result!.postId).toBe('NID');
+    expect(execFileMock.mock.calls[1][0]).toMatch(/[\\/]\.local[\\/]bin[\\/]xhs(\.exe)?$/);
+  });
+
   it('throws XhsCliException on a CLI error response', async () => {
     mockCli(
       {
