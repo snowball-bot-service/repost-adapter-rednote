@@ -369,6 +369,62 @@ describe('handleProcessingRequest (strawberry + post)', () => {
   });
 });
 
+describe('handleProcessingRequest (feed API EF* stream keys)', () => {
+  const baseReq = {
+    method: 'strawberry' as const,
+    repostMethod: 'post' as const,
+    source: 'NID',
+    code: 'c1',
+    requester,
+    extra: { rawUrl: 'https://www.xiaohongshu.com/explore/NID?xsec_token=abc' },
+  };
+
+  async function run(stream: Record<string, unknown>) {
+    mockCli(
+      feedResponse({
+        note_id: 'NID',
+        type: 'video',
+        image_list: [{ url_default: 'https://x/poster.jpg' }],
+        video: { media: { stream } },
+      })
+    );
+    const { ctx, getProcessHandler } = createMockContext();
+    await adapter.initState(ctx);
+    return getProcessHandler()(baseReq);
+  }
+
+  it('prefers EF5 (h265) over EF4 (h264)', async () => {
+    const result = await run({
+      EF4: [{ master_url: 'https://x/ef4.mp4' }],
+      EF5: [{ master_url: 'https://x/ef5.mp4' }],
+      EF6: [],
+      EF7: [],
+    });
+    expect(result!.medias).toEqual([{ type: 'video', url: 'https://x/ef5.mp4' }]);
+  });
+
+  it('picks the highest-resolution variant within the chosen codec', async () => {
+    const result = await run({
+      EF4: [{ master_url: 'https://x/ef4-4k.mp4', width: 2160, height: 3840 }],
+      EF5: [
+        { master_url: 'https://x/720.mp4', width: 720, height: 960 },
+        { master_url: 'https://x/1440.mp4', width: 1440, height: 1920 },
+        { master_url: 'https://x/1080.mp4', width: 1080, height: 1440 },
+      ],
+    });
+    // 编码优先级不变 (EF5 > EF4), 仅在 EF5 内取最高分辨率
+    expect(result!.medias).toEqual([{ type: 'video', url: 'https://x/1440.mp4' }]);
+  });
+
+  it('falls back to any non-empty unknown stream key', async () => {
+    const result = await run({
+      EF6: [],
+      EF9: [{ master_url: 'https://x/ef9.mp4' }],
+    });
+    expect(result!.medias).toEqual([{ type: 'video', url: 'https://x/ef9.mp4' }]);
+  });
+});
+
 describe('parseCount', () => {
   it('parses plain and 万/亿 suffixed counts', () => {
     expect(parseCount('415')).toBe(415);

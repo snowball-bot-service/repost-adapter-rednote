@@ -101,16 +101,19 @@ export interface ImageInfo {
   url: string;
 }
 
-export interface Stream {
-  h265: StreamItem[];
-  h266: StreamItem[];
-  av1: StreamItem[];
-  h264: StreamItem[];
-}
+/**
+ * 视频流, 键为编码标签。
+ *   - HTML state: h265 / h264 / av1 / h266
+ *   - feed API (xhs CLI): EF5 (= h265) / EF4 (= h264) / EF6 / EF7
+ */
+export type Stream = Record<string, StreamItem[] | undefined>;
 
 export interface StreamItem {
   masterUrl: string;
   backupUrls: string[];
+  /** 清晰度; 同一编码下有多个版本时用于挑选最高分辨率 */
+  width?: number;
+  height?: number;
 }
 
 export interface User {
@@ -146,13 +149,8 @@ export interface VideoPayload {
       bizId: string;
       duration: number;
     };
-    /** 视频流 */
-    stream: {
-      av1: StreamVariant[];
-      h264: StreamVariant[];
-      h265: StreamVariant[];
-      h266: StreamVariant[];
-    };
+    /** 视频流 (键名见 {@link Stream}) */
+    stream: Record<string, StreamVariant[] | undefined>;
   };
   image: {
     /** 视频封面 / 缩略图文件 ID */
@@ -199,20 +197,8 @@ export interface ImagePayload {
   /** 默认图片 URL */
   urlDefault: string;
 
-  /** 流媒体信息（视频流、编码格式等） */
-  stream: {
-    /** AV1 编码流列表（可能为空） */
-    av1: StreamInfo[];
-
-    /** H.264 编码流列表 */
-    h264: StreamInfo[];
-
-    /** H.265 编码流列表（可能为空） */
-    h265: StreamInfo[];
-
-    /** H.266 编码流列表（可能为空） */
-    h266: StreamInfo[];
-  };
+  /** 流媒体信息 (实况图视频流; 键名见 {@link Stream}) */
+  stream: Record<string, StreamInfo[] | undefined>;
 
   /** 是否为 Live Photo（动态照片） */
   livePhoto: boolean;

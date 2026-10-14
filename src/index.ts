@@ -13,7 +13,7 @@ import { HttpManager } from './utils/http';
 import { extractHandleId, fetchHandleDataFromAPI } from './manager';
 import { RednoteManager } from './rednote/rednote.manager';
 import { XhsCli } from './rednote/xhs-cli';
-import { NoteData } from './rednote/rednote.type';
+import { NoteData, Stream, StreamItem } from './rednote/rednote.type';
 import {
   FetchHandleDataFailedException,
   UnsupportedMethodException,
@@ -341,21 +341,25 @@ export function parseCount(value?: string): number {
 function extractNoteMedias(note: NoteData): ProcessMediaInfo[] {
   const medias: ProcessMediaInfo[] = [];
 
-  // 按编码优先级从视频流里取首个可用的 masterUrl
-  const pickStreamUrl = (stream?: {
-    h265?: { masterUrl: string }[];
-    h264?: { masterUrl: string }[];
-    av1?: { masterUrl: string }[];
-    h266?: { masterUrl: string }[];
-  }): string | undefined => {
-    for (const variants of [
-      stream?.h265,
-      stream?.h264,
-      stream?.av1,
-      stream?.h266,
-    ]) {
-      const url = variants?.[0]?.masterUrl;
-      if (url) return url;
+  // 按编码优先级从视频流里取首个可用的 masterUrl。
+  // 流的键名随通道不同:
+  //   - HTML state: h265 / h264 / av1 / h266
+  //   - feed API (xhs CLI): EF5 (= h265) / EF4 (= h264) / EF6 / EF7 (未确认)
+  // 已知键都取不到时, 兜底取任意非空流, 避免平台新增编码标签后视频直接丢失。
+  // 同一编码下可能有多个清晰度 (eg. 720p / 1080p / 1440p), 取分辨率最高者
+  const pickStreamUrl = (stream?: Stream): string | undefined => {
+    if (!stream) return undefined;
+    const known = ['h265', 'EF5', 'h264', 'EF4', 'av1', 'h266'];
+    const keys = [
+      ...known,
+      ...Object.keys(stream).filter((k) => !known.includes(k)),
+    ];
+    for (const key of keys) {
+      const variants = (stream[key] ?? []).filter((v) => v.masterUrl);
+      if (!variants.length) continue;
+      const pixels = (v: StreamItem) => (v.width ?? 0) * (v.height ?? 0);
+      return variants.reduce((best, v) => (pixels(v) > pixels(best) ? v : best))
+        .masterUrl;
     }
     return undefined;
   };
